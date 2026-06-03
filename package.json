@@ -1,0 +1,12 @@
+{
+  "name": "analytics-dashboard",
+  "version": "1.0.0",
+  "description": "Self-contained User & Market Analytics Dashboard — React + Chart.js + Tailwind, no build step",
+  "main": "index.html",
+  "scripts": {
+    "start": "open index.html"
+  },
+  "keywords": ["analytics", "dashboard", "react", "chartjs", "tailwind"],
+  "author": "jayram.d3",
+  "license": "MIT"
+}

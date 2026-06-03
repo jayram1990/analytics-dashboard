@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Analytics Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] } } }
+    }
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+</head>
+<body class="bg-gray-50 font-sans">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    // ─── Seeded PRNG ─────────────────────────────────────────────────────────────
+    function mulberry32(seed) {
+      return function () {
+        seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+    function pick(arr, rng) { return arr[Math.floor(rng() * arr.length)]; }
+    function randomDate(start, end, rng) {
+      const s = new Date(start).getTime(), e = new Date(end).getTime();
+      return new Date(s + rng() * (e - s)).toISOString().slice(0, 10);
+    }
+    function addDays(dateStr, days) {
+      const d = new Date(dateStr); d.setDate(d.getDate() + days);
+      return d.toISOString().slice(0, 10);
+    }
+    function fmtM(n) {
+      if (n >= 1000) return "$" + (n / 1000).toFixed(1) + "B";
+      return "$" + n.toFixed(0) + "M";
+    }
+    function fmtDate(iso) {
+      return new Date(iso + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+    }
+
+    // ─── Taxonomy ────────────────────────────────────────────────────────────────
+    const SOLUTION_AREAS = {
+      "Data & AI":             ["Analytics & Insights","Machine Learning","Data Engineering","AI Governance"],
+      "Cloud Infrastructure":  ["Compute & Storage","Networking","Security & Compliance","DevOps & Automation"],
+      "Business Applications": ["CRM & Sales","ERP & Finance","HR & Workforce","Supply Chain"],
+      "Modern Work":           ["Collaboration","Productivity","Identity & Access","Communication"],
+    };
+    const INDUSTRIES = [
+      "Financial Services","Healthcare & Life Sciences","Retail & Consumer Goods",
+      "Manufacturing","Energy & Utilities","Technology","Public Sector",
+      "Education","Media & Entertainment","Transportation & Logistics",
+    ];
+    const REGIONS = ["North America","Europe","Asia Pacific","Latin America","Middle East & Africa"];
+    const REGION_CITY_MAP = {
+      "North America":        ["New York, US","Toronto, CA","Chicago, US","Mexico City, MX"],
+      "Europe":               ["London, UK","Berlin, DE","Paris, FR","Amsterdam, NL","Stockholm, SE","Madrid, ES","Zürich, CH"],
+      "Asia Pacific":         ["Tokyo, JP","Singapore, SG","Seoul, KR","Mumbai, IN","Sydney, AU","Bangkok, TH"],
+      "Latin America":        ["São Paulo, BR","Mexico City, MX"],
+      "Middle East & Africa": ["Dubai, AE","Cape Town, ZA"],
+    };
+    const ALL_SA = Object.keys(SOLUTION_AREAS);
+    const HISTORIC_YEARS  = [2019, 2020, 2021, 2022, 2023, 2024, 2025];
+    const FORECAST_YEARS  = [2026, 2027, 2028, 2029, 2030];
+    const ALL_YEARS       = [...HISTORIC_YEARS, ...FORECAST_YEARS];
+    const REVENUE_TYPES   = ["Cloud", "License", "Maintenance"];
+
+    // ─── User Analytics Data ──────────────────────────────────────────────────────
+    const FIRST   = ["James","Priya","Sofia","Miguel","Emma","Luca","Aisha","Noah","Yuki","Carlos",
+                     "Zara","Ethan","Mei","Omar","Chloe","Arjun","Layla","Felix","Grace","Ivan",
+                     "Nina","Leo","Sara","Ahmed","Mia","Hugo","Nadia","Sven","Ella","Rohan"];
+    const LAST    = ["Smith","Patel","Garcia","Müller","Chen","Okonkwo","Rossi","Kim","Andersen",
+                     "Santos","Cohen","Ivanov","Nguyen","Fischer","Brown","Singh","Nakamura","López",
+                     "Williams","Johansson","Ali","Tremblay","Kumar","Ferrari","Park","Olsen","Diaz",
+                     "Kowalski","Martin","Berg"];
+    const DOMAINS  = ["gmail.com","yahoo.com","outlook.com","company.io","work.co","corp.net"];
+    const STATUSES = ["active","active","active","active","inactive","inactive","churned"];
+    const PLANS    = ["free","free","free","pro","pro","enterprise"];
+    const DEVICES  = ["desktop","desktop","desktop","mobile","mobile","tablet"];
+
+    function generateUsers() {
+      const rng = mulberry32(42);
+      return Array.from({ length: 50 }, (_, i) => {
+        const first = pick(FIRST, rng), last = pick(LAST, rng);
+        const signupDate  = randomDate("2024-01-01", "2026-04-01", rng);
+        const lastActive  = addDays(signupDate, Math.floor(rng() * 400));
+        const solutionArea    = pick(ALL_SA, rng);
+        const subSolutionArea = pick(SOLUTION_AREAS[solutionArea], rng);
+        const region      = pick(Object.keys(REGION_CITY_MAP), rng);
+        return {
+          id: i + 1,
+          name: `${first} ${last}`,
+          email: `${first.toLowerCase()}.${last.toLowerCase()}@${pick(DOMAINS, rng)}`,
+          status: pick(STATUSES, rng),
+          signupDate,
+          lastActive: lastActive > "2026-06-03" ? "2026-06-03" : lastActive,
+          location: pick(REGION_CITY_MAP[region], rng),
+          region,
+          device: pick(DEVICES, rng),
+          plan: pick(PLANS, rng),
+          sessionTime: Math.floor(rng() * 43) + 2,
+          solutionArea, subSolutionArea,
+          industry: pick(INDUSTRIES, rng),
+        };
+      });
+    }
+
+    const USERS = generateUsers();
+
+    function generateMonthlySignups(users) {
+      const months = ["Jul 2025","Aug 2025","Sep 2025","Oct 2025","Nov 2025","Dec 2025",
+                      "Jan 2026","Feb 2026","Mar 2026","Apr 2026","May 2026","Jun 2026"];
+      if (!users || users.length === 0) return months.map(l => ({ label: l, count: 0 }));
+      const rng = mulberry32(99);
+      const base = months.map((label, i) => ({ label, count: Math.round(40 + i * 9 + rng() * 28) }));
+      const scale = users.length / 50;
+      return base.map(m => ({ ...m, count: Math.max(0, Math.round(m.count * scale)) }));
+    }
+
+    const WD_BASE = [
+      { day:"Mon", users:1140 },{ day:"Tue", users:1230 },{ day:"Wed", users:1180 },
+      { day:"Thu", users:1090 },{ day:"Fri", users:980  },{ day:"Sat", users:430  },
+      { day:"Sun", users:310  },
+    ];
+    function scaleWD(n, total) {
+      if (total === 0) return WD_BASE.map(d => ({ ...d, users: 0 }));
+      const s = n / total;
+      return WD_BASE.map(d => ({ ...d, users: Math.max(0, Math.round(d.users * s)) }));
+    }
+
+    // ─── Market Analytics Data ────────────────────────────────────────────────────
+    // Revenue in $M. Historic = actuals, Forecast = projected with growth.
+    function mkRng(seed) { return mulberry32(seed); }
+
+    function genMarketRevenue() {
+      // Base market size per solution area per year, seeded for determinism
+      const rng = mkRng(7);
+      const data = {};
+      ALL_SA.forEach(sa => {
+        data[sa] = {};
+        INDUSTRIES.forEach(ind => {
+          data[sa][ind] = {};
+          REGIONS.forEach(region => {
+            data[sa][ind][region] = {};
+            REVENUE_TYPES.forEach(rt => {
+              // Base revenue for this combination
+              let base = 20 + rng() * 180;
+              const growth = 0.08 + rng() * 0.14; // 8–22% CAGR
+              const forecastBoost = 1 + rng() * 0.05;
+              data[sa][ind][region][rt] = {};
+              ALL_YEARS.forEach((yr, idx) => {
+                const isForecast = yr > 2025;
+                const prev = base * Math.pow(1 + growth, idx);
+                const noise = isForecast ? forecastBoost : (0.93 + rng() * 0.14);
+                data[sa][ind][region][rt][yr] = Math.round(prev * noise * 10) / 10;
+              });
+            });
+          });
+        });
+      });
+      return data;
+    }
+
+    const MARKET_DATA = genMarketRevenue();
+
+    function getMarketSlice({ solutionArea, subSolutionArea, industry, region, revenueType }) {
+      // Sum across the selected dimensions. Empty = all.
+      const sas  = solutionArea  ? [solutionArea]  : ALL_SA;
+      const inds  = industry      ? [industry]       : INDUSTRIES;
+      const regs  = region        ? [region]         : REGIONS;
+      const rts   = revenueType   ? [revenueType]    : REVENUE_TYPES;
+
+      return ALL_YEARS.map(yr => {
+        let total = 0;
+        sas.forEach(sa => {
+          inds.forEach(ind => {
+            regs.forEach(reg => {
+              rts.forEach(rt => {
+                total += (MARKET_DATA[sa]?.[ind]?.[reg]?.[rt]?.[yr] || 0);
+              });
+            });
+          });
+        });
+        return { year: yr, value: Math.round(total * 10) / 10 };
+      });
+    }
+
+    function getMarketByDimension(dim, filters) {
+      const { solutionArea, subSolutionArea, industry, region, revenueType } = filters;
+      const sas  = solutionArea  ? [solutionArea]  : ALL_SA;
+      const inds  = industry      ? [industry]       : INDUSTRIES;
+      const regs  = region        ? [region]         : REGIONS;
+      const rts   = revenueType   ? [revenueType]    : REVENUE_TYPES;
+      const yr    = filters.year  || 2025;
+
+      const totals = {};
+      if (dim === "industry") {
+        INDUSTRIES.forEach(ind => { totals[ind] = 0; });
+        sas.forEach(sa => INDUSTRIES.forEach(ind => regs.forEach(reg => rts.forEach(rt => {
+          totals[ind] += (MARKET_DATA[sa]?.[ind]?.[reg]?.[rt]?.[yr] || 0);
+        }))));
+      } else if (dim === "solutionArea") {
+        ALL_SA.forEach(sa => { totals[sa] = 0; });
+        ALL_SA.forEach(sa => inds.forEach(ind => regs.forEach(reg => rts.forEach(rt => {
+          totals[sa] += (MARKET_DATA[sa]?.[ind]?.[reg]?.[rt]?.[yr] || 0);
+        }))));
+      } else if (dim === "region") {
+        REGIONS.forEach(r => { totals[r] = 0; });
+        sas.forEach(sa => inds.forEach(ind => REGIONS.forEach(reg => rts.forEach(rt => {
+          totals[reg] += (MARKET_DATA[sa]?.[ind]?.[reg]?.[rt]?.[yr] || 0);
+        }))));
+      } else if (dim === "revenueType") {
+        REVENUE_TYPES.forEach(rt => { totals[rt] = 0; });
+        sas.forEach(sa => inds.forEach(ind => regs.forEach(reg => REVENUE_TYPES.forEach(rt => {
+          totals[rt] += (MARKET_DATA[sa]?.[ind]?.[reg]?.[rt]?.[yr] || 0);
+        }))));
+      }
+      return Object.entries(totals)
+        .map(([label, value]) => ({ label, value: Math.round(value * 10) / 10 }))
+        .sort((a, b) => b.value - a.value);
+    }
+
+    function computeCAGR(series) {
+      const hist = series.filter(d => HISTORIC_YEARS.includes(d.year));
+      if (hist.length < 2) return null;
+      const first = hist[0].value, last = hist[hist.length - 1].value;
+      const n = hist.length - 1;
+      return ((Math.pow(last / first, 1 / n) - 1) * 100).toFixed(1);
+    }
+
+    // ─── Chatbot Engine ──────────────────────────────────────────────────────────
+    const WELCOME_MSG = {
+      id: 0, role: "bot",
+      text: "Hi! I'm your Dashboard Assistant 👋\n\nIn User Analytics mode I can answer questions about users, churn, devices, and plans.\n\nIn Market Analytics mode I can answer questions about market size, revenue types, CAGR, and forecasts.\n\nOr switch to the Feedback tab to share your thoughts.",
+      timestamp: new Date(),
+    };
+
+    function answerUserQuery(q, users) {
+      const total = users.length;
+      if (total === 0) return "No users match the current filters.";
+      if (q.includes("total user") || (q.includes("how many") && q.includes("user") && !q.includes("active") && !q.includes("inactive") && !q.includes("churn")))
+        return `There are ${total} users matching the current filters.`;
+      if ((q.includes("active user") || (q.includes("how many") && q.includes("active"))) && !q.includes("inactive")) {
+        const n = users.filter(u => u.status === "active").length;
+        return `There are ${n} active users (${(n/total*100).toFixed(0)}% of filtered total).`;
+      }
+      if (q.includes("inactive")) {
+        const n = users.filter(u => u.status === "inactive").length;
+        return `There are ${n} inactive users (${(n/total*100).toFixed(0)}%).`;
+      }
+      if (q.includes("churn")) {
+        const ch = users.filter(u => u.status === "churned").length;
+        const rate = (ch/total*100).toFixed(1);
+        return q.includes("rate") || q.includes("%")
+          ? `Churn rate is ${rate}% (${ch} of ${total}).`
+          : `${ch} users churned — churn rate is ${rate}%.`;
+      }
+      if (q.includes("session")) {
+        const avg = Math.round(users.reduce((s,u)=>s+u.sessionTime,0)/total);
+        return `Average session time: ${avg} min\nMin: ${Math.min(...users.map(u=>u.sessionTime))} min | Max: ${Math.max(...users.map(u=>u.sessionTime))} min`;
+      }
+      if (q.includes("device")||q.includes("desktop")||q.includes("mobile")||q.includes("tablet")) {
+        const c={desktop:0,mobile:0,tablet:0}; users.forEach(u=>c[u.device]++);
+        return `Device breakdown (${total}):\n• Desktop: ${c.desktop} (${(c.desktop/total*100).toFixed(0)}%)\n• Mobile:  ${c.mobile} (${(c.mobile/total*100).toFixed(0)}%)\n• Tablet:  ${c.tablet} (${(c.tablet/total*100).toFixed(0)}%)`;
+      }
+      if (q.includes("plan")||q.includes("free")||q.includes(" pro")||q.includes("enterprise")) {
+        const c={}; users.forEach(u=>c[u.plan]=(c[u.plan]||0)+1);
+        return `Plan breakdown:\n• Free: ${c.free||0}  • Pro: ${c.pro||0}  • Enterprise: ${c.enterprise||0}`;
+      }
+      if (q.includes("solution area")||q.includes("solution")&&q.includes("area")) {
+        const c={}; users.forEach(u=>c[u.solutionArea]=(c[u.solutionArea]||0)+1);
+        return `Solution areas:\n${Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`• ${k}: ${v}`).join("\n")}`;
+      }
+      if (q.includes("industr")) {
+        const c={}; users.forEach(u=>c[u.industry]=(c[u.industry]||0)+1);
+        return `Top industries:\n${Object.entries(c).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([k,v],i)=>`${i+1}. ${k}: ${v}`).join("\n")}`;
+      }
+      if (q.includes("region")) {
+        const c={}; users.forEach(u=>c[u.region]=(c[u.region]||0)+1);
+        return `Regions:\n${Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`• ${k}: ${v}`).join("\n")}`;
+      }
+      return `I can answer:\n• Active/inactive/churned users\n• Churn rate\n• Session time\n• Device & plan breakdown\n• Solution area & industry\n• Regional breakdown`;
+    }
+
+    function answerMarketQuery(q, filters) {
+      const series = getMarketSlice(filters);
+      const totalMarket = series.find(d => d.year === 2025)?.value || 0;
+      const cagr = computeCAGR(series);
+      const forecast2030 = series.find(d => d.year === 2030)?.value || 0;
+
+      if (q.includes("market size")||q.includes("total market")||q.includes("tam")) {
+        return `Total market size (2025): ${fmtM(totalMarket)}\nForecast 2030: ${fmtM(forecast2030)}\nHistoric CAGR (2019–2025): ${cagr}%`;
+      }
+      if (q.includes("cagr")||q.includes("growth rate")||q.includes("compound")) {
+        return `Historic CAGR (2019–2025): ${cagr}%\nForecast CAGR (2025–2030): ~${(Number(cagr) + 1 + Math.random()*2).toFixed(1)}%`;
+      }
+      if (q.includes("forecast")||q.includes("predict")||q.includes("2030")||q.includes("future")) {
+        const fc = series.filter(d => FORECAST_YEARS.includes(d.year));
+        return `Market forecast:\n${fc.map(d=>`• ${d.year}: ${fmtM(d.value)}`).join("\n")}`;
+      }
+      if (q.includes("historic")||q.includes("historical")||q.includes("past")) {
+        const hi = series.filter(d => HISTORIC_YEARS.includes(d.year));
+        return `Historic market data:\n${hi.map(d=>`• ${d.year}: ${fmtM(d.value)}`).join("\n")}`;
+      }
+      if (q.includes("cloud")) {
+        const s = getMarketByDimension("revenueType", { ...filters, revenueType: undefined });
+        const cloud = s.find(d => d.label === "Cloud");
+        return cloud ? `Cloud revenue (2025): ${fmtM(cloud.value)}` : "No cloud data for current filters.";
+      }
+      if (q.includes("license")) {
+        const s = getMarketByDimension("revenueType", { ...filters, revenueType: undefined });
+        const lic = s.find(d => d.label === "License");
+        return lic ? `License revenue (2025): ${fmtM(lic.value)}` : "No license data.";
+      }
+      if (q.includes("maintenance")) {
+        const s = getMarketByDimension("revenueType", { ...filters, revenueType: undefined });
+        const mnt = s.find(d => d.label === "Maintenance");
+        return mnt ? `Maintenance revenue (2025): ${fmtM(mnt.value)}` : "No maintenance data.";
+      }
+      if (q.includes("revenue type")||q.includes("cloud vs")||q.includes("breakdown")) {
+        const s = getMarketByDimension("revenueType", { ...filters, revenueType: undefined });
+        const tot = s.reduce((a,b)=>a+b.value,0);
+        return `Revenue type breakdown (2025):\n${s.map(d=>`• ${d.label}: ${fmtM(d.value)} (${(d.value/tot*100).toFixed(0)}%)`).join("\n")}`;
+      }
+      if (q.includes("industr")) {
+        const s = getMarketByDimension("industry", filters).slice(0,5);
+        return `Top industries by market size (2025):\n${s.map((d,i)=>`${i+1}. ${d.label}: ${fmtM(d.value)}`).join("\n")}`;
+      }
+      if (q.includes("region")) {
+        const s = getMarketByDimension("region", filters);
+        const tot = s.reduce((a,b)=>a+b.value,0);
+        return `Regional market share (2025):\n${s.map(d=>`• ${d.label}: ${fmtM(d.value)} (${(d.value/tot*100).toFixed(0)}%)`).join("\n")}`;
+      }
+      if (q.includes("solution area")||q.includes("solution")&&q.includes("area")) {
+        const s = getMarketByDimension("solutionArea", filters);
+        return `Market by solution area (2025):\n${s.map((d,i)=>`${i+1}. ${d.label}: ${fmtM(d.value)}`).join("\n")}`;
+      }
+      return `I can answer market questions:\n• Market size / TAM\n• CAGR (historic & forecast)\n• Forecast to 2030\n• Cloud / License / Maintenance revenue\n• Revenue type breakdown\n• Industry & solution area market share\n• Regional analysis\n\nTry: "What is the market size?" or "Show me the forecast"`;
+    }
+
+    function answerQuery(text, visibleUsers, marketFilters, activeView) {
+      const q = text.toLowerCase().trim();
+      if (activeView === "market") return answerMarketQuery(q, marketFilters || {});
+      return answerUserQuery(q, visibleUsers || USERS);
+    }
+
+    // ─── Shared Chart Primitives ─────────────────────────────────────────────────
+    const TOOLTIP_OPTS = { backgroundColor:"#1e1b4b", titleColor:"#e0e7ff", bodyColor:"#c7d2fe", padding:10, cornerRadius:8 };
+
+    function useChart(buildConfig, deps) {
+      const canvasRef = useRef(null);
+      const chartRef  = useRef(null);
+      useEffect(() => {
+        if (chartRef.current) chartRef.current.destroy();
+        const ctx = canvasRef.current.getContext("2d");
+        chartRef.current = new Chart(ctx, buildConfig());
+        return () => chartRef.current?.destroy();
+      }, deps);
+      return canvasRef;
+    }
+
+    // ─── User Analytics Charts ────────────────────────────────────────────────────
+    function LineChartCard({ data }) {
+      const canvasRef = useChart(() => ({
+        type: "line",
+        data: {
+          labels: data.map(d => d.label),
+          datasets: [{ label:"New Signups", data:data.map(d=>d.count), borderColor:"#6366f1",
+            backgroundColor:"rgba(99,102,241,0.08)", fill:true, tension:0.4,
+            pointBackgroundColor:"#6366f1", pointRadius:4, pointHoverRadius:6 }],
+        },
+        options: { responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{display:false}, tooltip:TOOLTIP_OPTS },
+          scales:{ x:{grid:{display:false},ticks:{color:"#9ca3af",font:{size:11}}},
+                   y:{grid:{color:"#f3f4f6"},ticks:{color:"#9ca3af",font:{size:11}},beginAtZero:true} } },
+      }), [data]);
+      return (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Monthly Signups</h3>
+          <div className="relative h-64"><canvas ref={canvasRef} /></div>
+        </div>
+      );
+    }
+
+    function BarChartCard({ data }) {
+      const canvasRef = useChart(() => ({
+        type: "bar",
+        data: {
+          labels: data.map(d=>d.day),
+          datasets: [{ label:"Active Users", data:data.map(d=>d.users),
+            backgroundColor:data.map((_,i)=>i<5?"rgba(99,102,241,0.85)":"rgba(165,180,252,0.55)"),
+            borderRadius:6, borderSkipped:false }],
+        },
+        options: { responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{display:false}, tooltip:TOOLTIP_OPTS },
+          scales:{ x:{grid:{display:false},ticks:{color:"#9ca3af"}},
+                   y:{grid:{color:"#f3f4f6"},ticks:{color:"#9ca3af"},beginAtZero:true} } },
+      }), [data]);
+      return (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Active Users by Day of Week</h3>
+          <div className="relative h-52"><canvas ref={canvasRef} /></div>
+        </div>
+      );
+    }
+
+    function DonutChartCard({ users }) {
+      const desktop = users.filter(u=>u.device==="desktop").length;
+      const mobile  = users.filter(u=>u.device==="mobile").length;
+      const tablet  = users.filter(u=>u.device==="tablet").length;
+      const total   = users.length;
+      const canvasRef = useChart(() => ({
+        type: "doughnut",
+        data: { labels:["Desktop","Mobile","Tablet"],
+          datasets:[{ data:[desktop,mobile,tablet], backgroundColor:["#6366f1","#818cf8","#c7d2fe"],
+            borderColor:"#fff", borderWidth:3, hoverOffset:6 }] },
+        options: { responsive:true, maintainAspectRatio:false, cutout:"65%",
+          plugins:{ legend:{display:false}, tooltip:{ ...TOOLTIP_OPTS, callbacks:{label:c=>` ${c.label}: ${c.parsed}`} } } },
+      }), [desktop, mobile, tablet]);
+      const items = [
+        {label:"Desktop",count:desktop,color:"bg-indigo-500"},
+        {label:"Mobile", count:mobile, color:"bg-indigo-400"},
+        {label:"Tablet", count:tablet, color:"bg-indigo-200"},
+      ];
+      return (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Device Breakdown</h3>
+          <div className="relative h-48"><canvas ref={canvasRef} /></div>
+          <div className="mt-4 space-y-2">
+            {items.map(it => (
+              <div key={it.label} className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${it.color}`}></span>
+                  <span className="text-gray-600">{it.label}</span>
+                </div>
+                <span className="font-medium text-gray-800">{it.count} <span className="text-gray-400 font-normal">({total>0?Math.round(it.count/total*100):0}%)</span></span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function HBarChartCard({ title, data, color }) {
+      const h = Math.max(160, data.length * 30);
+      const canvasRef = useChart(() => ({
+        type: "bar",
+        data: { labels:data.map(d=>d.label), datasets:[{ data:data.map(d=>d.count||d.value),
+          backgroundColor:color||"rgba(99,102,241,0.8)", borderRadius:4, borderSkipped:false }] },
+        options: { indexAxis:"y", responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{display:false}, tooltip:TOOLTIP_OPTS },
+          scales:{ x:{grid:{color:"#f3f4f6"},ticks:{color:"#9ca3af",font:{size:10}},beginAtZero:true},
+                   y:{grid:{display:false},ticks:{color:"#374151",font:{size:10}}} } },
+      }), [data]);
+      return (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">{title}</h3>
+          <div className="relative" style={{height:h+"px"}}><canvas ref={canvasRef} /></div>
+        </div>
+      );
+    }
+
+    const REGION_COLORS = ["#6366f1","#8b5cf6","#06b6d4","#10b981","#f59e0b"];
+
+    function RegionDonutCard({ users }) {
+      const counts = {}; REGIONS.forEach(r=>counts[r]=0);
+      users.forEach(u=>{ if(counts[u.region]!==undefined) counts[u.region]++; });
+      const values = REGIONS.map(r=>counts[r]);
+      const total  = users.length;
+      const canvasRef = useChart(() => ({
+        type: "doughnut",
+        data: { labels:REGIONS, datasets:[{ data:values, backgroundColor:REGION_COLORS, borderColor:"#fff", borderWidth:3, hoverOffset:6 }] },
+        options: { responsive:true, maintainAspectRatio:false, cutout:"60%",
+          plugins:{ legend:{display:false}, tooltip:{ ...TOOLTIP_OPTS, callbacks:{label:c=>` ${c.label}: ${c.parsed}`} } } },
+      }), [values.join(",")]);
+      return (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Users by Region</h3>
+          <div className="relative h-44"><canvas ref={canvasRef} /></div>
+          <div className="mt-4 space-y-1.5">
+            {REGIONS.map((l,i) => (
+              <div key={l} className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{backgroundColor:REGION_COLORS[i]}}></span>
+                  <span className="text-gray-600 truncate">{l}</span>
+                </div>
+                <span className="font-medium text-gray-800 flex-shrink-0 ml-2">{values[i]} <span className="text-gray-400 font-normal">({total>0?Math.round(values[i]/total*100):0}%)</span></span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Market Analytics Charts ──────────────────────────────────────────────────
+    function MarketTrendChart({ series, title }) {
+      const histSeries = series.filter(d => HISTORIC_YEARS.includes(d.year));
+      const fcSeries   = series.filter(d => FORECAST_YEARS.includes(d.year));
+      // Bridge: last historic point + all forecast points
+      const bridge = [histSeries[histSeries.length-1], ...fcSeries];
+
+      const canvasRef = useChart(() => ({
+        type: "line",
+        data: {
+          labels: series.map(d => d.year),
+          datasets: [
+            {
+              label: "Historic",
+              data: series.map(d => HISTORIC_YEARS.includes(d.year) ? d.value : null),
+              borderColor: "#6366f1", backgroundColor: "rgba(99,102,241,0.08)",
+              fill: true, tension: 0.4, pointRadius: 4, pointHoverRadius: 6,
+              pointBackgroundColor: "#6366f1",
+            },
+            {
+              label: "Forecast",
+              data: series.map(d => {
+                if (d.year === 2025) return d.value;
+                return FORECAST_YEARS.includes(d.year) ? d.value : null;
+              }),
+              borderColor: "#f59e0b", backgroundColor: "rgba(245,158,11,0.06)",
+              borderDash: [6, 4], fill: true, tension: 0.4,
+              pointRadius: 4, pointHoverRadius: 6, pointBackgroundColor: "#f59e0b",
+            },
+          ],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: true, position: "top",
+              labels: { color:"#374151", font:{size:11}, boxWidth:12, padding:16,
+                generateLabels: chart => [
+                  { text:"Historic", fillStyle:"#6366f1", strokeStyle:"#6366f1", lineWidth:2, hidden:false, index:0 },
+                  { text:"Forecast", fillStyle:"#f59e0b", strokeStyle:"#f59e0b", lineWidth:2, lineDash:[6,4], hidden:false, index:1 },
+                ] },
+            },
+            tooltip: {
+              ...TOOLTIP_OPTS,
+              callbacks: { label: c => ` ${c.dataset.label}: ${fmtM(c.parsed.y)}` },
+            },
+          },
+          scales: {
+            x: { grid:{display:false}, ticks:{color:"#9ca3af",font:{size:11}} },
+            y: { grid:{color:"#f3f4f6"}, ticks:{color:"#9ca3af",font:{size:11},callback:v=>fmtM(v)}, beginAtZero:false },
+          },
+        },
+      }), [series]);
+
+      return (
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-gray-700">{title || "Market Revenue Trend"}</h3>
+            <div className="flex gap-2">
+              <span className="flex items-center gap-1 text-xs text-gray-500">
+                <span className="w-6 h-0.5 bg-indigo-500 inline-block rounded"></span> Historic
+              </span>
+              <span className="flex items-center gap-1 text-xs text-gray-500">
+                <span className="w-6 h-0.5 bg-amber-400 inline-block rounded border-dashed"></span> Forecast
+              </span>
+            </div>
+          </div>
+          <div className="relative h-72"><canvas ref={canvasRef} /></div>
+        </div>
+      );
+    }
+
+    function RevenueTypeStackedChart({ filters }) {
+      const series = ALL_YEARS.map(yr => {
+        const row = { year: yr };
+        REVENUE_TYPES.forEach(rt => {
+          row[rt] = getMarketByDimension("revenueType", { ...filters, revenueType: undefined })
+            .find(d => d.label === rt)?.value || 0;
+        });
+        return row;
+      });
+      // Re-compute properly per year
+      const perYear = ALL_YEARS.map(yr => {
+        const row = { year: yr };
+        REVENUE_TYPES.forEach(rt => {
+          const s = getMarketSlice({ ...filters, revenueType: rt });
+          row[rt] = s.find(d => d.year === yr)?.value || 0;
+        });
+        return row;
+      });
+
+      const RT_COLORS = { Cloud: "#6366f1", License: "#06b6d4", Maintenance: "#10b981" };
+      const canvasRef = useChart(() => ({
+        type: "bar",
+        data: {
+          labels: ALL_YEARS,
+          datasets: REVENUE_TYPES.map(rt => ({
+            label: rt,
+            data: perYear.map(r => r[rt]),
+            backgroundColor: rt === "Cloud" ? "rgba(99,102,241,0.85)"
+              : rt === "License" ? "rgba(6,182,212,0.85)"
+              : "rgba(16,185,129,0.85)",
+            borderRadius: 3, borderSkipped: false,
+          })),
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display:true, position:"top", labels:{color:"#374151",font:{size:11},boxWidth:12,padding:12} },
+            tooltip: { ...TOOLTIP_OPTS, callbacks:{ label:c=>` ${c.dataset.label}: ${fmtM(c.parsed.y)}` } },
+          },
+          scales: {
+            x: { stacked:true, grid:{display:false}, ticks:{color:"#9ca3af",font:{size:11}} },
+            y: { stacked:true, grid:{color:"#f3f4f6"}, ticks:{color:"#9ca3af",font:{size:11},callback:v=>fmtM(v)}, beginAtZero:true },
+          },
+        },
+      }), [filters]);
+
+      return (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Revenue by Type (Cloud / License / Maintenance)</h3>
+          <div className="relative h-64"><canvas ref={canvasRef} /></div>
+        </div>
+      );
+    }
+
+    function MarketHBarChart({ title, data, valueFormatter, color }) {
+      const canvasRef = useChart(() => ({
+        type: "bar",
+        data: { labels:data.map(d=>d.label), datasets:[{ data:data.map(d=>d.value),
+          backgroundColor:color||"rgba(99,102,241,0.8)", borderRadius:4, borderSkipped:false }] },
+        options: { indexAxis:"y", responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{display:false}, tooltip:{...TOOLTIP_OPTS,callbacks:{label:c=>` ${(valueFormatter||fmtM)(c.parsed.x)}`}} },
+          scales:{ x:{grid:{color:"#f3f4f6"},ticks:{color:"#9ca3af",font:{size:10},callback:valueFormatter||fmtM},beginAtZero:true},
+                   y:{grid:{display:false},ticks:{color:"#374151",font:{size:10}}} } },
+      }), [data]);
+      const h = Math.max(180, data.length * 34);
+      return (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">{title}</h3>
+          <div className="relative" style={{height:h+"px"}}><canvas ref={canvasRef} /></div>
+        </div>
+      );
+    }
+
+    function MarketRegionDonut({ filters }) {
+      const data = getMarketByDimension("region", filters);
+      const values = data.map(d => d.value);
+      const labels = data.map(d => d.label);
+      const total  = values.reduce((a,b)=>a+b,0);
+      const COLORS = ["#6366f1","#8b5cf6","#06b6d4","#10b981","#f59e0b"];
+      const canvasRef = useChart(() => ({
+        type: "doughnut",
+        data: { labels, datasets:[{ data:values, backgroundColor:COLORS, borderColor:"#fff", borderWidth:3, hoverOffset:6 }] },
+        options: { responsive:true, maintainAspectRatio:false, cutout:"60%",
+          plugins:{ legend:{display:false}, tooltip:{...TOOLTIP_OPTS,callbacks:{label:c=>` ${c.label}: ${fmtM(c.parsed)}`}} } },
+      }), [filters]);
+      return (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Market Share by Region (2025)</h3>
+          <div className="relative h-48"><canvas ref={canvasRef} /></div>
+          <div className="mt-4 space-y-1.5">
+            {labels.map((l,i)=>(
+              <div key={l} className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{backgroundColor:COLORS[i%COLORS.length]}}></span>
+                  <span className="text-gray-600 truncate">{l}</span>
+                </div>
+                <span className="font-medium text-gray-800 flex-shrink-0 ml-2">{fmtM(values[i])} <span className="text-gray-400 font-normal">({total>0?(values[i]/total*100).toFixed(0):0}%)</span></span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Market KPI Cards ─────────────────────────────────────────────────────────
+    function MktKPICard({ label, value, sub, color, icon }) {
+      const BG = { indigo:"bg-indigo-50", amber:"bg-amber-50", emerald:"bg-emerald-50", violet:"bg-violet-50", cyan:"bg-cyan-50" };
+      const TX = { indigo:"text-indigo-600", amber:"text-amber-600", emerald:"text-emerald-600", violet:"text-violet-600", cyan:"text-cyan-600" };
+      return (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm font-medium text-gray-500">{label}</span>
+            <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${BG[color]||"bg-indigo-50"}`}>
+              <span className={`text-lg font-bold ${TX[color]||"text-indigo-600"}`}>{icon}</span>
+            </div>
+          </div>
+          <div className="text-2xl font-bold text-gray-900">{value}</div>
+          {sub && <div className="text-xs text-gray-400 mt-1">{sub}</div>}
+        </div>
+      );
+    }
+
+    // ─── Filter Bar ──────────────────────────────────────────────────────────────
+    function FilterBar({ filters, onChange, extraFields }) {
+      const subOptions = filters.solutionArea ? SOLUTION_AREAS[filters.solutionArea] : Object.values(SOLUTION_AREAS).flat();
+      function set(key, val) {
+        const next = { ...filters, [key]: val };
+        if (key === "solutionArea") next.subSolutionArea = "";
+        onChange(next);
+      }
+      const sCls = "text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 text-gray-700 min-w-0";
+      const active = Object.entries(filters).filter(([k,v]) => v !== "" && k !== "year").length;
+
+      return (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-indigo-500">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+              </svg>
+              <span className="text-sm font-semibold text-gray-700">Filters</span>
+              {active > 0 && <span className="text-xs bg-indigo-600 text-white rounded-full px-2 py-0.5 font-medium">{active}</span>}
+            </div>
+            <div className="flex flex-wrap gap-3 flex-1">
+              <div className="flex flex-col gap-1 min-w-[165px]">
+                <label className="text-xs font-medium text-gray-500">Solution Area</label>
+                <select value={filters.solutionArea||""} onChange={e=>set("solutionArea",e.target.value)} className={sCls}>
+                  <option value="">All Solution Areas</option>
+                  {ALL_SA.map(k=><option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1 min-w-[185px]">
+                <label className="text-xs font-medium text-gray-500">Sub-Solution Area</label>
+                <select value={filters.subSolutionArea||""} onChange={e=>set("subSolutionArea",e.target.value)} className={sCls}>
+                  <option value="">All Sub-Solutions</option>
+                  {subOptions.map(k=><option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1 min-w-[185px]">
+                <label className="text-xs font-medium text-gray-500">Industry</label>
+                <select value={filters.industry||""} onChange={e=>set("industry",e.target.value)} className={sCls}>
+                  <option value="">All Industries</option>
+                  {INDUSTRIES.map(k=><option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1 min-w-[165px]">
+                <label className="text-xs font-medium text-gray-500">Region</label>
+                <select value={filters.region||""} onChange={e=>set("region",e.target.value)} className={sCls}>
+                  <option value="">All Regions</option>
+                  {REGIONS.map(k=><option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
+              {extraFields && extraFields.map(f => (
+                <div key={f.key} className="flex flex-col gap-1 min-w-[155px]">
+                  <label className="text-xs font-medium text-gray-500">{f.label}</label>
+                  <select value={filters[f.key]||""} onChange={e=>set(f.key,e.target.value)} className={sCls}>
+                    <option value="">{f.placeholder}</option>
+                    {f.options.map(o=><option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+            {active > 0 && (
+              <button onClick={() => {
+                const reset = { solutionArea:"", subSolutionArea:"", industry:"", region:"" };
+                if (extraFields) extraFields.forEach(f => reset[f.key] = "");
+                onChange(reset);
+              }} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex-shrink-0 whitespace-nowrap">
+                Clear all
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Status / Plan Badges & Avatar ────────────────────────────────────────────
+    const STATUS_STYLES = { active:"bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200", inactive:"bg-amber-50 text-amber-700 ring-1 ring-amber-200", churned:"bg-red-50 text-red-600 ring-1 ring-red-200" };
+    function StatusBadge({ status }) {
+      return <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${STATUS_STYLES[status]}`}>{status}</span>;
+    }
+    const PLAN_STYLES = { free:"bg-gray-100 text-gray-600", pro:"bg-indigo-50 text-indigo-700", enterprise:"bg-violet-50 text-violet-700" };
+    const AVATAR_COLORS = ["bg-indigo-500","bg-violet-500","bg-sky-500","bg-emerald-500","bg-rose-500","bg-amber-500"];
+    function Avatar({ name, id }) {
+      const initials = name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+      return <span className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0 ${AVATAR_COLORS[id%AVATAR_COLORS.length]}`}>{initials}</span>;
+    }
+
+    // ─── User Table ───────────────────────────────────────────────────────────────
+    const PAGE_SIZE = 10;
+    function UserTableCard({ users }) {
+      const [search, setSearch] = useState("");
+      const [sf, setSf]         = useState("all");
+      const [page, setPage]     = useState(1);
+
+      const filtered = users
+        .filter(u => sf === "all" || u.status === sf)
+        .filter(u => {
+          const q = search.toLowerCase();
+          return u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) ||
+                 u.location.toLowerCase().includes(q) || u.industry.toLowerCase().includes(q) ||
+                 u.solutionArea.toLowerCase().includes(q);
+        });
+
+      const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+      const safePage   = Math.min(page, totalPages);
+      const paginated  = filtered.slice((safePage-1)*PAGE_SIZE, safePage*PAGE_SIZE);
+      const COLS = ["User","Status","Plan","Solution Area","Sub-Solution","Industry","Region","Signed Up","Session"];
+
+      return (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+          <div className="p-5 border-b border-gray-100">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <h3 className="text-sm font-semibold text-gray-700 flex-1">Users <span className="text-gray-400 font-normal">({filtered.length})</span></h3>
+              <div className="relative">
+                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" placeholder="Search…" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}
+                  className="pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg w-52 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400" />
+              </div>
+              <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+                {["all","active","inactive","churned"].map(f=>(
+                  <button key={f} onClick={()=>{setSf(f);setPage(1);}}
+                    className={`px-3 py-1 rounded-md text-xs capitalize transition-all ${sf===f?"bg-white shadow-sm text-indigo-700 font-semibold":"text-gray-500 hover:text-gray-700"}`}>{f}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>{COLS.map(h=><th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {paginated.length===0
+                  ? <tr><td colSpan={COLS.length} className="px-5 py-10 text-center text-sm text-gray-400">No users match.</td></tr>
+                  : paginated.map(u=>(
+                    <tr key={u.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center gap-3"><Avatar name={u.name} id={u.id}/><div><div className="font-medium text-gray-900">{u.name}</div><div className="text-xs text-gray-400">{u.email}</div></div></div>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap"><StatusBadge status={u.status}/></td>
+                      <td className="px-4 py-3 whitespace-nowrap"><span className={`px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${PLAN_STYLES[u.plan]}`}>{u.plan}</span></td>
+                      <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-700 font-medium">{u.solutionArea}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-500">{u.subSolutionArea}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-600">{u.industry}</td>
+                      <td className="px-4 py-3 whitespace-nowrap"><span className="text-xs bg-gray-50 text-gray-600 px-2 py-0.5 rounded-md border border-gray-200">{u.region}</span></td>
+                      <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-600">{fmtDate(u.signupDate)}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-600">{u.sessionTime} min</td>
+                    </tr>
+                  ))
+                }
+              </tbody>
+            </table>
+          </div>
+          <div className="px-5 py-3.5 border-t border-gray-100 flex items-center justify-between">
+            <span className="text-xs text-gray-500">Showing {filtered.length===0?0:(safePage-1)*PAGE_SIZE+1}–{Math.min(safePage*PAGE_SIZE,filtered.length)} of {filtered.length}</span>
+            <div className="flex gap-1">
+              <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={safePage===1}
+                className="px-3 py-1.5 text-xs rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">← Prev</button>
+              <span className="px-3 py-1.5 text-xs text-gray-500">{safePage}/{totalPages}</span>
+              <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={safePage===totalPages}
+                className="px-3 py-1.5 text-xs rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Next →</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Market Data Table ────────────────────────────────────────────────────────
+    function MarketDataTable({ filters }) {
+      const rows = ALL_SA.map(sa => {
+        const row = { sa };
+        ALL_YEARS.forEach(yr => {
+          const s = getMarketSlice({ ...filters, solutionArea: sa });
+          row[yr] = s.find(d => d.year === yr)?.value || 0;
+        });
+        return row;
+      });
+
+      return (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+          <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-700">Market Size by Solution Area ($M)</h3>
+            <div className="flex gap-2 text-xs">
+              <span className="px-2 py-1 bg-indigo-50 text-indigo-700 rounded font-medium">Historic 2019–2025</span>
+              <span className="px-2 py-1 bg-amber-50 text-amber-700 rounded font-medium">Forecast 2026–2030</span>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap sticky left-0 bg-gray-50">Solution Area</th>
+                  {HISTORIC_YEARS.map(yr=><th key={yr} className="px-3 py-3 text-right font-semibold text-indigo-600 whitespace-nowrap">{yr}</th>)}
+                  {FORECAST_YEARS.map(yr=><th key={yr} className="px-3 py-3 text-right font-semibold text-amber-600 whitespace-nowrap">{yr} ▾</th>)}
+                  <th className="px-3 py-3 text-right font-semibold text-emerald-600 whitespace-nowrap">CAGR</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {rows.map(row => {
+                  const series = ALL_YEARS.map(yr => ({ year: yr, value: row[yr] }));
+                  const cagr = computeCAGR(series);
+                  return (
+                    <tr key={row.sa} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap sticky left-0 bg-white">{row.sa}</td>
+                      {HISTORIC_YEARS.map(yr=><td key={yr} className="px-3 py-3 text-right text-gray-600 whitespace-nowrap">{fmtM(row[yr])}</td>)}
+                      {FORECAST_YEARS.map(yr=><td key={yr} className="px-3 py-3 text-right text-amber-700 font-medium whitespace-nowrap">{fmtM(row[yr])}</td>)}
+                      <td className="px-3 py-3 text-right whitespace-nowrap">
+                        <span className="text-emerald-600 font-semibold">{cagr}%</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Chat Widget ─────────────────────────────────────────────────────────────
+    function fmtTime(date) { return date.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:false}); }
+    function TypingIndicator() {
+      return (
+        <div className="flex items-end gap-2 max-w-xs">
+          <div className="bg-indigo-50 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{animationDelay:"0ms"}}></span>
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{animationDelay:"150ms"}}></span>
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce" style={{animationDelay:"300ms"}}></span>
+          </div>
+        </div>
+      );
+    }
+    function MessageBubble({ msg }) {
+      const isBot = msg.role === "bot";
+      return (
+        <div className={`flex flex-col ${isBot?"items-start":"items-end"}`}>
+          <div className={`max-w-xs ${isBot?"bg-indigo-50 text-gray-800 rounded-2xl rounded-bl-sm":"bg-gray-100 text-gray-800 rounded-2xl rounded-br-sm"} px-3 py-2 text-xs leading-relaxed whitespace-pre-line`}>
+            {msg.text}
+          </div>
+          <span className="text-gray-400 mt-1 mx-1" style={{fontSize:"10px"}}>{fmtTime(msg.timestamp)}</span>
+        </div>
+      );
+    }
+    function FeedbackForm() {
+      const [rating, setRating] = useState(0);
+      const [hover, setHover]   = useState(0);
+      const [cat, setCat]       = useState("");
+      const [msg, setMsg]       = useState("");
+      const [done, setDone]     = useState(false);
+      if (done) return (
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 text-center">
+          <div className="w-14 h-14 rounded-full bg-emerald-50 flex items-center justify-center">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-7 h-7 text-emerald-500"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <div><p className="text-sm font-semibold text-gray-800">Thank you for your feedback!</p><p className="text-xs text-gray-400 mt-1">Your response has been recorded.</p></div>
+        </div>
+      );
+      return (
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Rate this dashboard</label>
+            <div className="flex gap-1">
+              {[1,2,3,4,5].map(i=>(
+                <button key={i} onClick={()=>setRating(i)} onMouseEnter={()=>setHover(i)} onMouseLeave={()=>setHover(0)} className="text-2xl leading-none transition-colors focus:outline-none">
+                  <span className={(i<=(hover||rating))?"text-amber-400":"text-gray-300"}>★</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Category</label>
+            <select value={cat} onChange={e=>setCat(e.target.value)} className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white text-gray-700">
+              <option value="">Select…</option>
+              <option value="bug">Bug report</option><option value="feature">Feature request</option>
+              <option value="accuracy">Data accuracy</option><option value="uiux">UI / UX</option><option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Message</label>
+            <textarea value={msg} onChange={e=>setMsg(e.target.value)} rows="4" placeholder="Tell us more…"
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none" />
+          </div>
+          <button onClick={()=>setDone(true)} disabled={!(rating>0&&cat&&msg.trim())}
+            className="w-full py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            Submit Feedback
+          </button>
+        </div>
+      );
+    }
+
+    function ChatWidget({ visibleUsers, marketFilters, activeView }) {
+      const [open, setOpen]         = useState(false);
+      const [tab, setTab]           = useState(0);
+      const [messages, setMessages] = useState([WELCOME_MSG]);
+      const [input, setInput]       = useState("");
+      const [typing, setTyping]     = useState(false);
+      const endRef = useRef(null);
+      useEffect(() => { endRef.current?.scrollIntoView({behavior:"smooth"}); }, [messages, typing]);
+      function send() {
+        const text = input.trim(); if (!text || typing) return;
+        setMessages(prev=>[...prev,{id:Date.now(),role:"user",text,timestamp:new Date()}]);
+        setInput(""); setTyping(true);
+        setTimeout(() => {
+          const reply = answerQuery(text, visibleUsers, marketFilters, activeView);
+          setTyping(false);
+          setMessages(prev=>[...prev,{id:Date.now()+1,role:"bot",text:reply,timestamp:new Date()}]);
+        }, 650);
+      }
+      return (
+        <>
+          <button onClick={()=>setOpen(o=>!o)}
+            className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-indigo-600 text-white shadow-lg hover:bg-indigo-700 flex items-center justify-center transition-all duration-200 hover:scale-105">
+            {open
+              ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-6 h-6"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-6 h-6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            }
+          </button>
+          {open && (
+            <div className="fixed bottom-24 right-6 z-50 w-96 bg-white rounded-xl shadow-xl border border-gray-200 flex flex-col overflow-hidden" style={{height:"480px"}}>
+              <div className="bg-indigo-600 px-4 py-3 flex items-center justify-between flex-shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-white"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  </div>
+                  <span className="text-white font-semibold text-sm">Dashboard Assistant</span>
+                </div>
+                <button onClick={()=>setOpen(false)} className="text-white/70 hover:text-white transition-colors text-lg leading-none">✕</button>
+              </div>
+              <div className="bg-indigo-700 px-3 py-2 flex-shrink-0">
+                <div className="flex gap-1 bg-indigo-800/40 rounded-lg p-1">
+                  {["Data Query","Feedback"].map((t,i)=>(
+                    <button key={t} onClick={()=>setTab(i)}
+                      className={tab===i?"flex-1 px-3 py-1.5 rounded-md text-xs font-semibold bg-white text-indigo-700 transition-all":"flex-1 px-3 py-1.5 rounded-md text-xs font-medium text-indigo-200 hover:text-white transition-all"}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {tab===0 && (
+                <>
+                  <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+                    {messages.map(m=><MessageBubble key={m.id} msg={m}/>)}
+                    {typing && <TypingIndicator/>}
+                    <div ref={endRef}/>
+                  </div>
+                  <div className="border-t border-gray-100 px-3 py-2.5 flex gap-2 flex-shrink-0">
+                    <input type="text" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}
+                      placeholder="Ask about the data…"
+                      className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-gray-50 placeholder-gray-400"/>
+                    <button onClick={send} disabled={!input.trim()||typing}
+                      className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    </button>
+                  </div>
+                </>
+              )}
+              {tab===1 && <FeedbackForm/>}
+            </div>
+          )}
+        </>
+      );
+    }
+
+    // ─── View Switcher ────────────────────────────────────────────────────────────
+    function ViewSwitcher({ active, onChange }) {
+      return (
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+          <button onClick={()=>onChange("user")}
+            className={active==="user"
+              ?"px-4 py-2 rounded-lg text-sm font-semibold bg-white shadow text-indigo-700 transition-all"
+              :"px-4 py-2 rounded-lg text-sm font-medium text-gray-500 hover:text-gray-700 transition-all"}>
+            <span className="flex items-center gap-2">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+              User Analytics
+            </span>
+          </button>
+          <button onClick={()=>onChange("market")}
+            className={active==="market"
+              ?"px-4 py-2 rounded-lg text-sm font-semibold bg-white shadow text-violet-700 transition-all"
+              :"px-4 py-2 rounded-lg text-sm font-medium text-gray-500 hover:text-gray-700 transition-all"}>
+            <span className="flex items-center gap-2">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+                <line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/>
+              </svg>
+              Market Analytics
+            </span>
+          </button>
+        </div>
+      );
+    }
+
+    // ─── User Analytics View ──────────────────────────────────────────────────────
+    function UserAnalyticsView() {
+      const [filters, setFilters] = useState({ solutionArea:"", subSolutionArea:"", industry:"", region:"" });
+
+      const filteredUsers = useMemo(() => USERS.filter(u =>
+        (!filters.solutionArea    || u.solutionArea    === filters.solutionArea) &&
+        (!filters.subSolutionArea || u.subSolutionArea === filters.subSolutionArea) &&
+        (!filters.industry        || u.industry        === filters.industry) &&
+        (!filters.region          || u.region          === filters.region)
+      ), [filters]);
+
+      const total      = filteredUsers.length;
+      const active     = filteredUsers.filter(u=>u.status==="active").length;
+      const churned    = filteredUsers.filter(u=>u.status==="churned").length;
+      const churnRate  = total > 0 ? (churned/total*100).toFixed(1)+"%" : "0%";
+      const avgSession = total > 0 ? Math.round(filteredUsers.reduce((s,u)=>s+u.sessionTime,0)/total)+" min" : "0 min";
+
+      const monthlyData  = useMemo(() => generateMonthlySignups(filteredUsers), [filteredUsers]);
+      const weekdayData  = useMemo(() => scaleWD(filteredUsers.length, USERS.length), [filteredUsers.length]);
+
+      const industryData = useMemo(() => {
+        const c={}; filteredUsers.forEach(u=>c[u.industry]=(c[u.industry]||0)+1);
+        return Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([label,count])=>({label,count}));
+      }, [filteredUsers]);
+
+      const solutionData = useMemo(() => {
+        const c={}; filteredUsers.forEach(u=>c[u.solutionArea]=(c[u.solutionArea]||0)+1);
+        return Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([label,count])=>({label,count}));
+      }, [filteredUsers]);
+
+      const isFiltered = Object.values(filters).some(v=>v!=="");
+
+      const ICON_BG = { users:"bg-indigo-50", active:"bg-emerald-50", churn:"bg-rose-50", clock:"bg-violet-50" };
+      const ICONS = {
+        users: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-indigo-600"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+        active: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-emerald-600"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+        churn: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-rose-500"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+        clock: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-violet-600"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+      };
+
+      return (
+        <div>
+          {isFiltered && <p className="text-sm text-gray-500 mb-4">Showing <span className="font-semibold text-indigo-700">{total}</span> of {USERS.length} users</p>}
+          <FilterBar filters={filters} onChange={setFilters} />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {[
+              {label:"Total Users",  value:total,      delta:"12% vs last period", iconKey:"users",  deltaUp:true},
+              {label:"Active Users", value:active,     delta:"8% vs last period",  iconKey:"active", deltaUp:true},
+              {label:"Churn Rate",   value:churnRate,  delta:"2% vs last period",  iconKey:"churn",  deltaUp:false},
+              {label:"Avg Session",  value:avgSession, delta:"3% vs last period",  iconKey:"clock",  deltaUp:true},
+            ].map(k => (
+              <div key={k.label} className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-500">{k.label}</span>
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${ICON_BG[k.iconKey]}`}>{ICONS[k.iconKey]}</div>
+                </div>
+                <div className="mt-3 flex items-end gap-2">
+                  <span className="text-2xl font-bold text-gray-900">{k.value}</span>
+                  <span className={`text-xs font-medium pb-0.5 ${k.deltaUp?"text-emerald-600":"text-rose-500"}`}>{k.deltaUp?"▲":"▼"} {k.delta}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-5"><LineChartCard data={monthlyData}/></div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5"><DonutChartCard users={filteredUsers}/></div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-5"><BarChartCard data={weekdayData}/></div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5"><RegionDonutCard users={filteredUsers}/></div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5"><HBarChartCard title="Users by Industry" data={industryData} color="rgba(99,102,241,0.8)"/></div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5"><HBarChartCard title="Users by Solution Area" data={solutionData} color="rgba(139,92,246,0.8)"/></div>
+          </div>
+          <UserTableCard users={filteredUsers}/>
+        </div>
+      );
+    }
+
+    // ─── Market Analytics View ────────────────────────────────────────────────────
+    function MarketAnalyticsView() {
+      const [filters, setFilters] = useState({ solutionArea:"", subSolutionArea:"", industry:"", region:"", revenueType:"" });
+
+      const series = useMemo(() => getMarketSlice(filters), [filters]);
+      const cagr   = useMemo(() => computeCAGR(series), [series]);
+      const mkt2025 = series.find(d=>d.year===2025)?.value || 0;
+      const mkt2030 = series.find(d=>d.year===2030)?.value || 0;
+      const fcastCagr = cagr ? (Number(cagr) * 1.15).toFixed(1) : "—";
+
+      const industryMkt = useMemo(() => getMarketByDimension("industry", filters).slice(0,10), [filters]);
+      const saMkt       = useMemo(() => getMarketByDimension("solutionArea", filters), [filters]);
+
+      const extraFields = [
+        { key:"revenueType", label:"Revenue Type", placeholder:"All Revenue Types", options:REVENUE_TYPES },
+      ];
+
+      return (
+        <div>
+          <FilterBar filters={filters} onChange={setFilters} extraFields={extraFields} />
+
+          {/* Market KPIs */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <MktKPICard label="Market Size 2025" value={fmtM(mkt2025)} sub="Total addressable market" color="indigo" icon="$"/>
+            <MktKPICard label="Forecast 2030"    value={fmtM(mkt2030)} sub="Projected market size"  color="amber"  icon="▲"/>
+            <MktKPICard label="Historic CAGR"    value={cagr ? cagr+"%" : "—"} sub="2019–2025 compound growth" color="emerald" icon="~"/>
+            <MktKPICard label="Forecast CAGR"    value={fcastCagr+"%" } sub="2025–2030 projected growth" color="violet" icon="⟶"/>
+          </div>
+
+          {/* Trend + Revenue Type */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <MarketTrendChart series={series} title="Market Revenue Trend (Historic & Forecast)" />
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <MarketRegionDonut filters={filters} />
+            </div>
+          </div>
+
+          {/* Stacked revenue by type */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-6">
+            <RevenueTypeStackedChart filters={filters} />
+          </div>
+
+          {/* Industry + Solution Area market charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <MarketHBarChart title="Market Size by Industry (2025)" data={industryMkt} color="rgba(99,102,241,0.8)" />
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <MarketHBarChart title="Market Size by Solution Area (2025)" data={saMkt} color="rgba(139,92,246,0.8)" />
+            </div>
+          </div>
+
+          {/* Historic & Forecast Data Table */}
+          <MarketDataTable filters={filters} />
+        </div>
+      );
+    }
+
+    // ─── App ─────────────────────────────────────────────────────────────────────
+    function App() {
+      const [view, setView] = useState("user");
+
+      // For chatbot context
+      const [uFilters, setUFilters] = useState({ solutionArea:"", subSolutionArea:"", industry:"", region:"" });
+      const [mFilters, setMFilters] = useState({ solutionArea:"", subSolutionArea:"", industry:"", region:"", revenueType:"" });
+
+      const filteredUsers = useMemo(() => USERS.filter(u =>
+        (!uFilters.solutionArea    || u.solutionArea    === uFilters.solutionArea) &&
+        (!uFilters.subSolutionArea || u.subSolutionArea === uFilters.subSolutionArea) &&
+        (!uFilters.industry        || u.industry        === uFilters.industry) &&
+        (!uFilters.region          || u.region          === uFilters.region)
+      ), [uFilters]);
+
+      return (
+        <div className="min-h-screen bg-gray-50">
+          {/* Top navigation bar */}
+          <div className="bg-white border-b border-gray-200 sticky top-0 z-40">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex items-center justify-between h-16 gap-4">
+                <div>
+                  <h1 className="text-lg font-bold text-gray-900">
+                    {view === "user" ? "User Analytics" : "Market Analytics"}
+                  </h1>
+                  <p className="text-xs text-gray-400">Last updated: June 3, 2026</p>
+                </div>
+                <ViewSwitcher active={view} onChange={setView} />
+                <span className="hidden sm:block text-sm bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-full font-medium whitespace-nowrap">
+                  {view === "market" ? "2019 – 2030" : "Last 12 months"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* View content */}
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            {view === "user"   && <UserAnalyticsView />}
+            {view === "market" && <MarketAnalyticsView />}
+          </div>
+
+          <ChatWidget visibleUsers={filteredUsers} marketFilters={mFilters} activeView={view} />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
